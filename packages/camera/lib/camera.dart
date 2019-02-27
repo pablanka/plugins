@@ -465,6 +465,24 @@ class CameraController extends ValueNotifier<CameraValue> {
     }
   }
 
+	Future<void> turnTorchOn() async {
+		try {
+      await _channel.invokeMethod<void>('turnTorchOn');
+    } on PlatformException catch (e) {
+      throw CameraException(e.code, e.message);
+    }
+	}
+
+	Future<void> turnTorchOff() async {
+		try {
+      await _channel.invokeMethod<void>('turnTorchOff');
+    } on PlatformException catch (e) {
+      throw CameraException(e.code, e.message);
+    }
+	}
+
+  Future<bool> get hasTorch async => await _channel.invokeMethod('hasTorch');
+
   /// Releases the resources of this camera.
   @override
   Future<void> dispose() async {
@@ -485,4 +503,5 @@ class CameraController extends ValueNotifier<CameraValue> {
       await _eventSubscription?.cancel();
     }
   }
+
 }

@@ -152,6 +152,8 @@ static FlutterError *getFlutterError(NSError *error) {
 - (void)startImageStreamWithMessenger:(NSObject<FlutterBinaryMessenger> *)messenger;
 - (void)stopImageStream;
 - (void)captureToFile:(NSString *)filename result:(FlutterResult)result;
+- (void)turnTorch:(bool)on result:(FlutterResult)result;
+- (void)hasTorch:(FlutterResult)result;
 @end
 
 @implementation FLTCam
@@ -207,6 +209,38 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 
 - (void)stop {
   [_captureSession stopRunning];
+}
+
+- (void)turnTorch:(bool)on  result:(FlutterResult)result{
+  // check if flashlight available
+  Class captureDeviceClass = NSClassFromString(@"AVCaptureDevice");
+  if (captureDeviceClass != nil) {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if ([device hasTorch] && [device hasFlash]){
+      [device lockForConfiguration:nil];
+      if (on) {
+        [device setTorchMode:AVCaptureTorchModeOn];
+        [device setFlashMode:AVCaptureFlashModeOn];
+        //torchIsOn = YES; //define as a variable/property if you need to know status 
+      } else {
+        [device setTorchMode:AVCaptureTorchModeOff];
+        [device setFlashMode:AVCaptureFlashModeOff];
+        //torchIsOn = NO;            
+      }
+      [device unlockForConfiguration];
+    }
+  } 
+  result(nil);
+}
+
+- (void)hasTorch:(FlutterResult)result{
+  // check if flashlight available 
+  AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+  if ([device hasTorch] && [device hasFlash]){
+    result(YES);
+  } else {
+    result(NO);
+  }
 }
 
 - (void)captureToFile:(NSString *)path result:(FlutterResult)result {
@@ -710,6 +744,12 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
       [_camera startVideoRecordingAtPath:call.arguments[@"filePath"] result:result];
     } else if ([@"stopVideoRecording" isEqualToString:call.method]) {
       [_camera stopVideoRecordingWithResult:result];
+    } else if ([@"turnTorchOn" isEqualToString:call.method]) {
+      [_camera turnTorch:YES result:result];
+    } else if ([@"turnTorchOff" isEqualToString:call.method]) {
+      [_camera turnTorch:NO result:result];
+    } else if ([@"hasTorch" isEqualToString:call.method]) {
+      [_camera hasTorch:result];
     } else {
       result(FlutterMethodNotImplemented);
     }

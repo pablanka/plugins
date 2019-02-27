@@ -233,6 +233,17 @@ public class CameraPlugin implements MethodCallHandler {
           }
           break;
         }
+      case "turnTorchOn":
+        this.turn(true);
+        result.success(null);
+        break;
+      case "turnTorchOff":
+        this.turn(false);
+        result.success(null);
+        break;
+      case "hasTorch":
+        result.success(this.hasTorch());
+        break;
       case "dispose":
         {
           if (camera != null) {
@@ -250,6 +261,27 @@ public class CameraPlugin implements MethodCallHandler {
         result.notImplemented();
         break;
     }
+  }
+
+  public void turnTroch(Boolean on){
+      try {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+              for (String id : cameraManager.getCameraIdList()) {
+                  // Turn on the flash if camera has one
+                  if (cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE)) {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                          cameraManager.setTorchMode(id, on);
+                      }
+                  }
+              }
+          }
+      } catch (Exception e2) {
+          System.out.println("Torch Failed : " + e2.getMessage());
+      }
+  }
+
+  private boolean hasTorch() {
+      return _registrar.context().getApplicationContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH);
   }
 
   private static class CompareSizesByArea implements Comparator<Size> {
