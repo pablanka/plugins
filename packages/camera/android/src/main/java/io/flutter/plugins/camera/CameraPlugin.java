@@ -7,7 +7,10 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
@@ -19,9 +22,11 @@ import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.ExifInterface;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaRecorder;
+import android.media.ThumbnailUtils;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Size;
@@ -199,7 +204,7 @@ public class CameraPlugin implements MethodCallHandler {
         }
       case "takePicture":
         {
-          camera.takePicture((String) call.argument("path"), result);
+          camera.takePicture((String) call.argument("path"), (String) call.argument("thumbPath"), result);
           break;
         }
       case "startVideoRecording":
@@ -234,13 +239,25 @@ public class CameraPlugin implements MethodCallHandler {
           break;
         }
       case "turnTorchOn":
-        this.turn(true);
-        result.success(null);
-        break;
+        {
+          try {
+            camera.turnTroch(true);
+            result.success(null);
+          } catch (CameraAccessException e) {
+            result.error("CameraAccess", e.getMessage(), null);
+          }
+          break;
+        }
       case "turnTorchOff":
-        this.turn(false);
-        result.success(null);
-        break;
+        {
+          try {
+            camera.turnTroch(false);
+            result.success(null);
+          } catch (CameraAccessException e) {
+            result.error("CameraAccess", e.getMessage(), null);
+          }
+          break;
+        }
       case "hasTorch":
         result.success(this.hasTorch());
         break;
@@ -263,25 +280,8 @@ public class CameraPlugin implements MethodCallHandler {
     }
   }
 
-  public void turnTroch(Boolean on){
-      try {
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-              for (String id : cameraManager.getCameraIdList()) {
-                  // Turn on the flash if camera has one
-                  if (cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE)) {
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                          cameraManager.setTorchMode(id, on);
-                      }
-                  }
-              }
-          }
-      } catch (Exception e2) {
-          System.out.println("Torch Failed : " + e2.getMessage());
-      }
-  }
-
   private boolean hasTorch() {
-      return _registrar.context().getApplicationContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH);
+      return registrar.context().getApplicationContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_FLASH);
   }
 
   private static class CompareSizesByArea implements Comparator<Size> {
@@ -603,13 +603,30 @@ public class CameraPlugin implements MethodCallHandler {
       }
     }
 
-    private void takePicture(String filePath, @NonNull final Result result) {
+    private Bitmap rotateImage(Bitmap source, float angle) {
+        Matrix matrix = new Matrix();
+        matrix.postRotate(angle);
+        return Bitmap.createBitmap(
+          source, 0, 0, source.getWidth(), source.getHeight(),matrix, true
+        );
+    }
+
+    private void takePicture(String filePath, String thumbPath, @NonNull final Result result) {
       final File file = new File(filePath);
+      final File thumbFile = new File(thumbPath);
 
       if (file.exists()) {
         result.error(
             "fileExists",
             "File at path '" + filePath + "' already exists. Cannot overwrite.",
+            null);
+        return;
+      }
+      
+      if (thumbFile.exists()) {
+        result.error(
+            "fileExists",
+            "File at path '" + thumbPath + "' already exists. Cannot overwrite.",
             null);
         return;
       }
@@ -621,6 +638,62 @@ public class CameraPlugin implements MethodCallHandler {
               try (Image image = reader.acquireLatestImage()) {
                 ByteBuffer buffer = image.getPlanes()[0].getBuffer();
                 writeToFile(buffer, file);
+
+                /////////////////////////////////////////////////////////////////////////////////////
+                ExifInterface ei = new ExifInterface(file.getPath());
+                int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION,
+                                                    ExifInterface.ORIENTATION_UNDEFINED);
+
+                Bitmap fileBitmap = BitmapFactory.decodeFile(file.getPath());
+
+                int maxWidth = 256;
+                int maxHeight = 256;
+                int width = fileBitmap.getWidth();
+                int height = fileBitmap.getHeight();
+
+                if (width > height) {
+                    // landscape
+                    float ratio = (float) width / maxWidth;
+                    width = maxWidth;
+                    height = (int)(height / ratio);
+                } else if (height > width) {
+                    // portrait
+                    float ratio = (float) height / maxHeight;
+                    height = maxHeight;
+                    width = (int)(width / ratio);
+                } else {
+                    // square
+                    height = maxHeight;
+                    width = maxWidth;
+                }
+
+
+                Bitmap thumbnail = ThumbnailUtils.extractThumbnail(fileBitmap, width, height);
+
+                Bitmap rotatedBitmap = null;
+                switch(orientation) {
+                    case ExifInterface.ORIENTATION_ROTATE_90:
+                        rotatedBitmap = rotateImage(thumbnail, 90);
+                        break;
+
+                    case ExifInterface.ORIENTATION_ROTATE_180:
+                        rotatedBitmap = rotateImage(thumbnail, 180);
+                        break;
+
+                    case ExifInterface.ORIENTATION_ROTATE_270:
+                        rotatedBitmap = rotateImage(thumbnail, 270);
+                        break;
+
+                    case ExifInterface.ORIENTATION_NORMAL:
+                    default:
+                        rotatedBitmap = thumbnail;
+                }
+                
+                FileOutputStream out = new FileOutputStream(thumbFile.getPath()) ;
+                rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out);
+
+                /////////////////////////////////////////////////////////////////////////////////////
+
                 result.success(null);
               } catch (IOException e) {
                 result.error("IOError", "Failed saving image", null);
@@ -630,8 +703,7 @@ public class CameraPlugin implements MethodCallHandler {
           null);
 
       try {
-        final CaptureRequest.Builder captureBuilder =
-            cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+        final CaptureRequest.Builder captureBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
         captureBuilder.addTarget(pictureImageReader.getSurface());
         captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, getMediaOrientation());
 
@@ -786,6 +858,25 @@ public class CameraPlugin implements MethodCallHandler {
             }
           },
           null);
+    }
+
+    public void turnTroch(Boolean on) throws CameraAccessException{
+      try {
+        SurfaceTexture surfaceTexture = textureEntry.surfaceTexture();
+        surfaceTexture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
+        Surface previewSurface = new Surface(surfaceTexture);
+
+        CaptureRequest.Builder captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+        captureRequestBuilder.set(CaptureRequest.FLASH_MODE, on ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
+        captureRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+
+        captureRequestBuilder.addTarget(previewSurface);
+
+        // Then Send request to current camera session
+        cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, null);
+      } catch (Exception e) {
+        sendErrorEvent(e.getMessage());
+      }
     }
 
     private void startPreviewWithImageStream() throws CameraAccessException {
