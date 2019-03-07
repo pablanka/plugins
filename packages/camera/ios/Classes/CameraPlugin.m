@@ -242,9 +242,9 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   // check if flashlight available 
   AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
   if ([device hasTorch] && [device hasFlash]){
-    result(YES);
+    result([NSNumber numberWithBool:YES]);
   } else {
-    result(NO);
+    result([NSNumber numberWithBool:NO]);
   }
 }
 

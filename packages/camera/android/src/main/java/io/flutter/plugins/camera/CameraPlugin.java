@@ -666,8 +666,7 @@ public class CameraPlugin implements MethodCallHandler {
                     height = maxHeight;
                     width = maxWidth;
                 }
-
-
+                
                 Bitmap thumbnail = ThumbnailUtils.extractThumbnail(fileBitmap, width, height);
 
                 Bitmap rotatedBitmap = null;
