@@ -620,7 +620,58 @@ public class CameraPlugin implements MethodCallHandler {
         );
     }
 
+  private void resize(String imagePath, String targetPath, int maxSize, int format, int orientation, final Result result) {
+    Bitmap imageBitmap = BitmapFactory.decodeFile(imagePath);
+    try (FileOutputStream out = new FileOutputStream(targetPath)) {
+      int width = imageBitmap.getWidth();
+      int height = imageBitmap.getHeight();
+
+      if(width > maxSize || height > maxSize) {
+        if (width > height) {
+            // landscape
+            float ratio = (float) width / maxSize;
+            width = maxSize;
+            height = (int)(height / ratio);
+        } else if (height > width) {
+            // portrait
+            float ratio = (float) height / maxSize;
+            height = maxSize;
+            width = (int)(width / ratio);
+        } else {
+            // square
+            height = maxSize;
+            width = maxSize;
+        }
+      }
+      Bitmap resized = ThumbnailUtils.extractThumbnail(imageBitmap, width, height);
+
+      Bitmap rotatedBitmap = null;
+      switch(orientation) {
+          case ExifInterface.ORIENTATION_ROTATE_90:
+              rotatedBitmap = rotateImage(resized, 90);
+              break;
+
+          case ExifInterface.ORIENTATION_ROTATE_180:
+              rotatedBitmap = rotateImage(resized, 180);
+              break;
+
+          case ExifInterface.ORIENTATION_ROTATE_270:
+              rotatedBitmap = rotateImage(resized, 270);
+              break;
+
+          case ExifInterface.ORIENTATION_NORMAL:
+          default:
+              rotatedBitmap = resized;
+      }
+
+      rotatedBitmap.compress(format == 0 ? Bitmap.CompressFormat.JPEG : Bitmap.CompressFormat.PNG, 100, out);
+    } catch (IOException e) {
+      result.error("IOError", "Failed saving image", e.getMessage());
+    }
+  }
+
     private void takePicture(String filePath, String thumbPath, @NonNull final Result result) {
+      final String _filePath = filePath;
       final File file = new File(filePath);
       final File thumbFile = new File(thumbPath);
 
@@ -646,14 +697,19 @@ public class CameraPlugin implements MethodCallHandler {
             public void onImageAvailable(ImageReader reader) {
               try (Image image = reader.acquireLatestImage()) {
                 ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+
                 writeToFile(buffer, file);
 
-                /////////////////////////////////////////////////////////////////////////////////////
-                ExifInterface ei = new ExifInterface(file.getPath());
+                ExifInterface ei = new ExifInterface(_filePath);
                 int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION,
                                                     ExifInterface.ORIENTATION_UNDEFINED);
 
-                Bitmap fileBitmap = BitmapFactory.decodeFile(file.getPath());
+                resize(_filePath, _filePath, 1920, 0, orientation, result);
+
+                /////////////////////////////////////////////////////////////////////////////////////
+
+                final File _file = new File(_filePath);
+                Bitmap fileBitmap = BitmapFactory.decodeFile(_file.getPath());
 
                 int maxWidth = 256;
                 int maxHeight = 256;
@@ -677,28 +733,9 @@ public class CameraPlugin implements MethodCallHandler {
                 }
                 
                 Bitmap thumbnail = ThumbnailUtils.extractThumbnail(fileBitmap, width, height);
-
-                Bitmap rotatedBitmap = null;
-                switch(orientation) {
-                    case ExifInterface.ORIENTATION_ROTATE_90:
-                        rotatedBitmap = rotateImage(thumbnail, 90);
-                        break;
-
-                    case ExifInterface.ORIENTATION_ROTATE_180:
-                        rotatedBitmap = rotateImage(thumbnail, 180);
-                        break;
-
-                    case ExifInterface.ORIENTATION_ROTATE_270:
-                        rotatedBitmap = rotateImage(thumbnail, 270);
-                        break;
-
-                    case ExifInterface.ORIENTATION_NORMAL:
-                    default:
-                        rotatedBitmap = thumbnail;
-                }
                 
                 FileOutputStream out = new FileOutputStream(thumbFile.getPath()) ;
-                rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out);
+                thumbnail.compress(Bitmap.CompressFormat.JPEG, 100, out);
 
                 /////////////////////////////////////////////////////////////////////////////////////
 
