@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,88 @@ import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
+import androidx.lifecycle.DefaultLifecycleObserver;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
+import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
+import io.flutter.embedding.engine.plugins.lifecycle.FlutterLifecycleAdapter;
+import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.PluginRegistry;
 import java.io.File;
 
-public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
+@SuppressWarnings("deprecation")
+public class ImagePickerPlugin
+    implements MethodChannel.MethodCallHandler, FlutterPlugin, ActivityAware {
+
+  private class LifeCycleObserver
+      implements Application.ActivityLifecycleCallbacks, DefaultLifecycleObserver {
+    private final Activity thisActivity;
+
+    LifeCycleObserver(Activity activity) {
+      this.thisActivity = activity;
+    }
+
+    @Override
+    public void onCreate(@NonNull LifecycleOwner owner) {}
+
+    @Override
+    public void onStart(@NonNull LifecycleOwner owner) {}
+
+    @Override
+    public void onResume(@NonNull LifecycleOwner owner) {}
+
+    @Override
+    public void onPause(@NonNull LifecycleOwner owner) {}
+
+    @Override
+    public void onStop(@NonNull LifecycleOwner owner) {
+      onActivityStopped(thisActivity);
+    }
+
+    @Override
+    public void onDestroy(@NonNull LifecycleOwner owner) {
+      onActivityDestroyed(thisActivity);
+    }
+
+    @Override
+    public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
+
+    @Override
+    public void onActivityStarted(Activity activity) {}
+
+    @Override
+    public void onActivityResumed(Activity activity) {}
+
+    @Override
+    public void onActivityPaused(Activity activity) {}
+
+    @Override
+    public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
+
+    @Override
+    public void onActivityDestroyed(Activity activity) {
+      if (thisActivity == activity && activity.getApplicationContext() != null) {
+        ((Application) activity.getApplicationContext())
+            .unregisterActivityLifecycleCallbacks(
+                this); // Use getApplicationContext() to avoid casting failures
+      }
+    }
+
+    @Override
+    public void onActivityStopped(Activity activity) {
+      if (thisActivity == activity) {
+        delegate.saveStateBeforeResult();
+      }
+    }
+  }
 
   static final String METHOD_CALL_IMAGE = "pickImage";
   static final String METHOD_CALL_VIDEO = "pickVideo";
@@ -25,9 +100,15 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
   private static final int SOURCE_CAMERA = 0;
   private static final int SOURCE_GALLERY = 1;
 
-  private final PluginRegistry.Registrar registrar;
+  private MethodChannel channel;
   private ImagePickerDelegate delegate;
-  private Application.ActivityLifecycleCallbacks activityLifecycleCallbacks;
+  private FlutterPluginBinding pluginBinding;
+  private ActivityPluginBinding activityBinding;
+  private Application application;
+  private Activity activity;
+  // This is null when not using v2 embedding;
+  private Lifecycle lifecycle;
+  private LifeCycleObserver observer;
 
   public static void registerWith(PluginRegistry.Registrar registrar) {
     if (registrar.activity() == null) {
@@ -35,71 +116,166 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
       // we stop the registering process immediately because the ImagePicker requires an activity.
       return;
     }
-    ImagePickerCache.setUpWithActivity(registrar.activity());
-
-    final MethodChannel channel = new MethodChannel(registrar.messenger(), CHANNEL);
-
-    final File externalFilesDirectory =
-        registrar.activity().getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-    final ExifDataCopier exifDataCopier = new ExifDataCopier();
-    final ImageResizer imageResizer = new ImageResizer(externalFilesDirectory, exifDataCopier);
-    final ImagePickerDelegate delegate =
-        new ImagePickerDelegate(registrar.activity(), externalFilesDirectory, imageResizer);
-
-    registrar.addActivityResultListener(delegate);
-    registrar.addRequestPermissionsResultListener(delegate);
-    final ImagePickerPlugin instance = new ImagePickerPlugin(registrar, delegate);
-    channel.setMethodCallHandler(instance);
+    Activity activity = registrar.activity();
+    Application application = null;
+    if (registrar.context() != null) {
+      application = (Application) (registrar.context().getApplicationContext());
+    }
+    ImagePickerPlugin plugin = new ImagePickerPlugin();
+    plugin.setup(registrar.messenger(), application, activity, registrar, null);
   }
 
+  /**
+   * Default constructor for the plugin.
+   *
+   * <p>Use this constructor for production code.
+   */
+  // See also: * {@link #ImagePickerPlugin(ImagePickerDelegate, Activity)} for testing.
+  public ImagePickerPlugin() {}
+
   @VisibleForTesting
-  ImagePickerPlugin(final PluginRegistry.Registrar registrar, final ImagePickerDelegate delegate) {
-    this.registrar = registrar;
+  ImagePickerPlugin(final ImagePickerDelegate delegate, final Activity activity) {
     this.delegate = delegate;
-    this.activityLifecycleCallbacks =
-        new Application.ActivityLifecycleCallbacks() {
-          @Override
-          public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
+    this.activity = activity;
+  }
 
-          @Override
-          public void onActivityStarted(Activity activity) {}
+  @Override
+  public void onAttachedToEngine(FlutterPluginBinding binding) {
+    pluginBinding = binding;
+  }
 
-          @Override
-          public void onActivityResumed(Activity activity) {}
+  @Override
+  public void onDetachedFromEngine(FlutterPluginBinding binding) {
+    pluginBinding = null;
+  }
 
-          @Override
-          public void onActivityPaused(Activity activity) {}
+  @Override
+  public void onAttachedToActivity(ActivityPluginBinding binding) {
+    activityBinding = binding;
+    setup(
+        pluginBinding.getBinaryMessenger(),
+        (Application) pluginBinding.getApplicationContext(),
+        activityBinding.getActivity(),
+        null,
+        activityBinding);
+  }
 
-          @Override
-          public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
-            if (activity == registrar.activity()) {
-              delegate.saveStateBeforeResult();
+  @Override
+  public void onDetachedFromActivity() {
+    tearDown();
+  }
+
+  @Override
+  public void onDetachedFromActivityForConfigChanges() {
+    onDetachedFromActivity();
+  }
+
+  @Override
+  public void onReattachedToActivityForConfigChanges(ActivityPluginBinding binding) {
+    onAttachedToActivity(binding);
+  }
+
+  private void setup(
+      final BinaryMessenger messenger,
+      final Application application,
+      final Activity activity,
+      final PluginRegistry.Registrar registrar,
+      final ActivityPluginBinding activityBinding) {
+    this.activity = activity;
+    this.application = application;
+    this.delegate = constructDelegate(activity);
+    channel = new MethodChannel(messenger, CHANNEL);
+    channel.setMethodCallHandler(this);
+    observer = new LifeCycleObserver(activity);
+    if (registrar != null) {
+      // V1 embedding setup for activity listeners.
+      application.registerActivityLifecycleCallbacks(observer);
+      registrar.addActivityResultListener(delegate);
+      registrar.addRequestPermissionsResultListener(delegate);
+    } else {
+      // V2 embedding setup for activity listeners.
+      activityBinding.addActivityResultListener(delegate);
+      activityBinding.addRequestPermissionsResultListener(delegate);
+      lifecycle = FlutterLifecycleAdapter.getActivityLifecycle(activityBinding);
+      lifecycle.addObserver(observer);
+    }
+  }
+
+  private void tearDown() {
+    activityBinding.removeActivityResultListener(delegate);
+    activityBinding.removeRequestPermissionsResultListener(delegate);
+    activityBinding = null;
+    lifecycle.removeObserver(observer);
+    lifecycle = null;
+    delegate = null;
+    channel.setMethodCallHandler(null);
+    channel = null;
+    application.unregisterActivityLifecycleCallbacks(observer);
+    application = null;
+  }
+
+  private final ImagePickerDelegate constructDelegate(final Activity setupActivity) {
+    final ImagePickerCache cache = new ImagePickerCache(setupActivity);
+
+    final File externalFilesDirectory =
+        setupActivity.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+    final ExifDataCopier exifDataCopier = new ExifDataCopier();
+    final ImageResizer imageResizer = new ImageResizer(externalFilesDirectory, exifDataCopier);
+    return new ImagePickerDelegate(setupActivity, externalFilesDirectory, imageResizer, cache);
+  }
+
+  // MethodChannel.Result wrapper that responds on the platform thread.
+  private static class MethodResultWrapper implements MethodChannel.Result {
+    private MethodChannel.Result methodResult;
+    private Handler handler;
+
+    MethodResultWrapper(MethodChannel.Result result) {
+      methodResult = result;
+      handler = new Handler(Looper.getMainLooper());
+    }
+
+    @Override
+    public void success(final Object result) {
+      handler.post(
+          new Runnable() {
+            @Override
+            public void run() {
+              methodResult.success(result);
             }
-          }
+          });
+    }
 
-          @Override
-          public void onActivityDestroyed(Activity activity) {}
+    @Override
+    public void error(
+        final String errorCode, final String errorMessage, final Object errorDetails) {
+      handler.post(
+          new Runnable() {
+            @Override
+            public void run() {
+              methodResult.error(errorCode, errorMessage, errorDetails);
+            }
+          });
+    }
 
-          @Override
-          public void onActivityStopped(Activity activity) {}
-        };
-
-    if (this.registrar != null
-        && this.registrar.activity() != null
-        && this.registrar.activity().getApplication() != null) {
-      this.registrar
-          .activity()
-          .getApplication()
-          .registerActivityLifecycleCallbacks(this.activityLifecycleCallbacks);
+    @Override
+    public void notImplemented() {
+      handler.post(
+          new Runnable() {
+            @Override
+            public void run() {
+              methodResult.notImplemented();
+            }
+          });
     }
   }
 
   @Override
-  public void onMethodCall(MethodCall call, MethodChannel.Result result) {
-    if (registrar.activity() == null) {
-      result.error("no_activity", "image_picker plugin requires a foreground activity.", null);
+  public void onMethodCall(MethodCall call, MethodChannel.Result rawResult) {
+    if (activity == null) {
+      rawResult.error("no_activity", "image_picker plugin requires a foreground activity.", null);
       return;
     }
+    MethodChannel.Result result = new MethodResultWrapper(rawResult);
     int imageSource;
     switch (call.method) {
       case METHOD_CALL_IMAGE:
