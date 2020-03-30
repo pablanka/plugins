@@ -61,7 +61,7 @@ public class Camera {
   private boolean recordingVideo;
   private CamcorderProfile recordingProfile;
   private int currentOrientation = ORIENTATION_UNKNOWN;
-  private Activity activity
+  private Activity activity;
   private Boolean flashEnable = false;
 
   // Mirrors camera.dart
