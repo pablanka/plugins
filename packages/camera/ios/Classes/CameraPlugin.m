@@ -204,7 +204,7 @@ static ResolutionPreset getResolutionPresetForString(NSString *preset) {
 - (void)stopVideoRecordingWithResult:(FlutterResult)result;
 - (void)startImageStreamWithMessenger:(NSObject<FlutterBinaryMessenger> *)messenger;
 - (void)stopImageStream;
-- (void)captureToFile:(NSString *)filename thumbPath:(NSString *)thumbPath result:(FlutterResult)result;
+- (void)captureToFile:(NSString *)filename result:(FlutterResult)result;
 - (void)turnTorch:(bool)on result:(FlutterResult)result;
 - (void)hasTorch:(FlutterResult)result;
 @end
@@ -306,7 +306,7 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   }
 }
 
-- (void)captureToFile:(NSString *)path thumbPath:(NSString *)thumbPath result:(FlutterResult)result {
+- (void)captureToFile:(NSString *)path result:(FlutterResult)result {
   AVCapturePhotoSettings *settings = [AVCapturePhotoSettings photoSettings];
   if (_resolutionPreset == max) {
     [settings setHighResolutionPhotoEnabled:YES];
