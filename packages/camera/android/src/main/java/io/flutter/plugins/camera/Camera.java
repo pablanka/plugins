@@ -5,6 +5,7 @@ import static io.flutter.plugins.camera.CameraUtils.computeBestPreviewSize;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.pm.PackageManager;
 import android.content.Context;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
@@ -60,6 +61,7 @@ public class Camera {
   private boolean recordingVideo;
   private CamcorderProfile recordingProfile;
   private int currentOrientation = ORIENTATION_UNKNOWN;
+  private Activity activity
   private Boolean flashEnable = false;
 
   // Mirrors camera.dart
@@ -84,6 +86,7 @@ public class Camera {
       throw new IllegalStateException("No activity available!");
     }
 
+    this.activity = activity;
     this.cameraName = cameraName;
     this.enableAudio = enableAudio;
     this.flutterTexture = flutterTexture;
