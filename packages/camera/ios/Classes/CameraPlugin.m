@@ -929,11 +929,11 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
       [_camera startVideoRecordingAtPath:call.arguments[@"filePath"] result:result];
     } else if ([@"stopVideoRecording" isEqualToString:call.method]) {
       [_camera stopVideoRecordingWithResult:result];
-    } else if ([@"turnTorchOn" isEqualToString:call.method]) {
+    } else if ([@"turnFlashOn" isEqualToString:call.method]) {
       [_camera turnTorch:YES result:result];
-    } else if ([@"turnTorchOff" isEqualToString:call.method]) {
+    } else if ([@"turnFlashOff" isEqualToString:call.method]) {
       [_camera turnTorch:NO result:result];
-    } else if ([@"hasTorch" isEqualToString:call.method]) {
+    } else if ([@"hasFlash" isEqualToString:call.method]) {
       [_camera hasTorch:result];
     } else {
       result(FlutterMethodNotImplemented);
